@@ -13,6 +13,27 @@ const apiFetch = async (ep) => {
 const imgSrc  = v => !v ? null : (v.startsWith("http")||v.startsWith("blob")) ? v : `${API_BASE}${v}`;
 const fmtDate = iso => iso ? new Date(iso).toLocaleDateString("fr-FR",{year:"numeric",month:"long",day:"numeric"}) : "";
 
+// Convertit une URL YouTube/Vimeo "normale" (page de visionnage) en URL
+// embarquable dans une <iframe>. Une URL comme youtube.com/watch?v=XXXX
+// refuse la connexion en iframe ("refused to connect") — il faut l'URL
+// /embed/XXXX. Corrige le bug rencontré sur la page "Qui sommes-nous".
+const toEmbedUrl = (url) => {
+  if (!url) return url;
+  const yt = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|watch\?v=|shorts\/))([^&\n?#]+)/);
+  if (yt) return `https://www.youtube.com/embed/${yt[1]}?rel=0`;
+  const vimeo = url.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+  if (vimeo) return `https://player.vimeo.com/video/${vimeo[1]}`;
+  return url;
+};
+
+// Retire toute balise HTML brute qui aurait pu se retrouver stockée dans un
+// champ texte (copie depuis une source HTML, export Word/Google Docs, etc.).
+const stripHtmlTags = (str) => {
+  if (typeof str !== "string" || !str) return str;
+  return str.replace(/<[^>]*>/g, "").replace(/&nbsp;/gi," ").replace(/&quot;/gi,'"')
+    .replace(/&#39;/gi,"'").replace(/&amp;/gi,"&").replace(/&lt;/gi,"<").replace(/&gt;/gi,">").trim();
+};
+
 function useApi(ep) {
   const [data,setData]=useState(null);const [loading,setLoading]=useState(true);
   useEffect(()=>{apiFetch(ep).then(setData).catch(()=>setData([])).finally(()=>setLoading(false));},[ep]);
@@ -180,7 +201,7 @@ const CSS = `
   /* EXPERTISE GRID */
   .expertise-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;}
   @media(max-width:768px){.expertise-grid{grid-template-columns:repeat(2,1fr);}}
-  @media(max-width:480px){.expertise-grid{grid-template-columns:1fr;}}
+  @media(max-width:480px){.expertise-grid{grid-template-columns:1fr;}.part-logo{width:140px;height:88px;padding:12px;}}
   .expertise-card{background:#fff;border:1.5px solid var(--border);border-radius:28px;padding:28px 24px;cursor:pointer;transition:all .35s cubic-bezier(.34,1.56,.64,1);display:flex;flex-direction:column;gap:13px;position:relative;overflow:hidden;box-shadow:var(--shadow-sm);}
   .expertise-card::before{content:'';position:absolute;inset:0;background:linear-gradient(140deg,rgba(37,99,235,.06),transparent 60%);opacity:0;transition:opacity .3s;}
   .expertise-card::after{content:'';position:absolute;bottom:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--orange),var(--gold));border-radius:0 0 24px 24px;transform:scaleX(0);transform-origin:left;transition:transform .35s ease;}
@@ -262,9 +283,9 @@ const CSS = `
   .avis-dot.active{background:#60A5FA;width:28px;border-radius:99px;box-shadow:0 0 8px rgba(96,165,250,.5);}
 
   /* PARTENAIRES */
-  .part-logo{background:#fff;border:1.5px solid var(--border);border-radius:28px;padding:26px 34px;display:flex;align-items:center;justify-content:center;transition:all .35s cubic-bezier(.34,1.56,.64,1);box-shadow:var(--shadow-sm);}
+  .part-logo{background:#fff;border:1.5px solid var(--border);border-radius:24px;width:190px;height:110px;padding:16px;display:flex;align-items:center;justify-content:center;transition:all .35s cubic-bezier(.34,1.56,.64,1);box-shadow:var(--shadow-sm);}
   .part-logo:hover{border-color:rgba(37,99,235,.3);box-shadow:0 16px 40px rgba(37,99,235,.14);transform:translateY(-6px) scale(1.02);}
-  .part-logo img{height:50px;object-fit:contain;filter:grayscale(.8) opacity(.7);transition:all .35s;}
+  .part-logo img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;filter:grayscale(.8) opacity(.7);transition:all .35s;}
   .part-logo:hover img{filter:grayscale(0) opacity(1);}
 
   /* CONTACT */
@@ -625,7 +646,7 @@ function CursorLight() {
 // ── WHATSAPP BUBBLE ──────────────────────────────────────────────────────────
 function WaBubble() {
   return (
-    <a href="https://wa.me/22901425454954" target="_blank" rel="noreferrer" className="wa-bubble" aria-label="WhatsApp">
+    <a href="https://wa.me/2290142545495" target="_blank" rel="noreferrer" className="wa-bubble" aria-label="WhatsApp">
       <div className="wa-bubble-ping"/>
       <span className="wa-label">Discutons !</span>
       <svg width="26" height="26" viewBox="0 0 24 24" fill="#fff"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
@@ -869,7 +890,7 @@ function PageAccueil({navigate}) {
                   {directeur.imageUrl?<img src={imgSrc(directeur.imageUrl)} alt={directeur.nom}/>:<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:80,fontWeight:900,color:"rgba(255,255,255,.3)",fontFamily:"Playfair Display"}}>{(directeur.nom||"D")[0]}</div>}
                 </div>
                 <div className="dir-blob-border"/>
-                {directeur.presentation&&<div className="dir-quote-card"><div className="dir-quote-text">"{directeur.presentation.slice(0,100)}…"</div><div className="dir-quote-name">{directeur.nom}</div></div>}
+                {directeur.presentation&&<div className="dir-quote-card"><div className="dir-quote-text">"{stripHtmlTags(directeur.presentation).slice(0,100)}…"</div><div className="dir-quote-name">{directeur.nom}</div></div>}
               </div>
             </Reveal>
             <Reveal cls="reveal-right">
@@ -877,7 +898,7 @@ function PageAccueil({navigate}) {
               <h2 className="section-title" style={{marginBottom:8}}>{directeur.nom}</h2>
               <p style={{color:"var(--orange)",fontWeight:600,fontSize:16,marginBottom:20}}>{directeur.titre}</p>
               <div className="divider"/>
-              <p style={{fontSize:15.5,lineHeight:1.9,color:"#555",whiteSpace:"pre-wrap"}}>{directeur.presentation}</p>
+              <p style={{fontSize:15.5,lineHeight:1.9,color:"#555",whiteSpace:"pre-wrap"}}>{stripHtmlTags(directeur.presentation)}</p>
             </Reveal>
           </div>
         </section>
@@ -1015,7 +1036,7 @@ function PageAccueil({navigate}) {
             <button onClick={()=>navigate("contact")} style={{padding:"14px 32px",background:"#fff",color:"var(--orange)",borderRadius:99,fontSize:15,fontWeight:700,border:"none",cursor:"pointer",transition:"transform .2s,box-shadow .2s"}}
               onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 10px 30px rgba(0,0,0,.2)";}}
               onMouseLeave={e=>{e.currentTarget.style.transform="";e.currentTarget.style.boxShadow="";}}>Contactez-nous </button>
-            <a href="https://wa.me/22901425454954" target="_blank" rel="noreferrer" style={{padding:"14px 32px",background:"rgba(255,255,255,.15)",color:"#fff",borderRadius:99,fontSize:15,fontWeight:600,border:"1.5px solid rgba(255,255,255,.3)",display:"inline-flex",alignItems:"center",gap:8}}>WhatsApp</a>
+            <a href="https://wa.me/2290142545495" target="_blank" rel="noreferrer" style={{padding:"14px 32px",background:"rgba(255,255,255,.15)",color:"#fff",borderRadius:99,fontSize:15,fontWeight:600,border:"1.5px solid rgba(255,255,255,.3)",display:"inline-flex",alignItems:"center",gap:8}}>WhatsApp</a>
           </div>
         </Reveal>
       </section>
@@ -1055,8 +1076,8 @@ function PageQuiSommesNous() {
       <section className="section">
         {loading?<Spinner/>:(
           <div style={{maxWidth:820,margin:"0 auto"}}>
-            <p style={{fontSize:17,lineHeight:1.9,color:"#444",marginBottom:48,whiteSpace:"pre-wrap"}}>{data?.texte||"Africa Ingénierie est une entreprise spécialisée dans l'accompagnement des industries africaines. Depuis notre création, nous mettons notre expertise au service de la performance industrielle, en offrant des solutions adaptées aux réalités du continent africain. Notre équipe d'ingénieurs qualifiés intervient dans la maintenance, l'installation, la formation et le conseil pour vous aider à atteindre vos objectifs industriels."}</p>
-            {data?.videoUrl&&<div style={{borderRadius:20,overflow:"hidden",aspectRatio:"16/9",background:"#000",marginBottom:60}}><iframe src={data.videoUrl} style={{width:"100%",height:"100%",border:"none"}} title="Présentation" allowFullScreen/></div>}
+            <p style={{fontSize:17,lineHeight:1.9,color:"#444",marginBottom:48,whiteSpace:"pre-wrap"}}>{stripHtmlTags(data?.texte)||"Africa Ingénierie est une entreprise spécialisée dans l'accompagnement des industries africaines. Depuis notre création, nous mettons notre expertise au service de la performance industrielle, en offrant des solutions adaptées aux réalités du continent africain. Notre équipe d'ingénieurs qualifiés intervient dans la maintenance, l'installation, la formation et le conseil pour vous aider à atteindre vos objectifs industriels."}</p>
+            {data?.videoUrl&&<div style={{borderRadius:20,overflow:"hidden",aspectRatio:"16/9",background:"#000",marginBottom:60}}><iframe src={toEmbedUrl(data.videoUrl)} style={{width:"100%",height:"100%",border:"none"}} title="Présentation" allowFullScreen/></div>}
           </div>
         )}
       </section>
@@ -1169,7 +1190,7 @@ function PageQuiSommesNous() {
               <h3 style={{fontFamily:"Playfair Display",fontSize:32,fontWeight:900,marginBottom:6}}>{directeur.nom}</h3>
               <p style={{color:"var(--orange)",fontWeight:600,fontSize:16,marginBottom:20}}>{directeur.titre}</p>
               <div className="divider"/>
-              <p style={{fontSize:15.5,lineHeight:1.9,color:"#555",fontStyle:"italic",borderLeft:"3px solid var(--orange)",paddingLeft:20,whiteSpace:"pre-wrap"}}>{directeur.presentation}</p>
+              <p style={{fontSize:15.5,lineHeight:1.9,color:"#555",fontStyle:"italic",borderLeft:"3px solid var(--orange)",paddingLeft:20,whiteSpace:"pre-wrap"}}>{stripHtmlTags(directeur.presentation)}</p>
             </Reveal>
           </div>
         </section>
@@ -1179,9 +1200,24 @@ function PageQuiSommesNous() {
 }
 
 // ── PAGE DOMAINES ─────────────────────────────────────────────────────────────
-function PageDomaines() {
+function PageDomaines({focusId}) {
   const {data,loading}=useApi("/domaines");
   const actifs=Array.isArray(data)?data.filter(d=>d.actif!==false):[];
+  const [highlighted,setHighlighted]=useState(null);
+
+  useEffect(()=>{
+    if (!focusId || loading) return;
+    const t = setTimeout(()=>{
+      const el = document.getElementById(`domaine-${focusId}`);
+      if (el) {
+        el.scrollIntoView({behavior:"smooth", block:"center"});
+        setHighlighted(focusId);
+        setTimeout(()=>setHighlighted(null), 2200);
+      }
+    }, 120); // laisse le temps au DOM/aux animations Reveal de se poser
+    return ()=>clearTimeout(t);
+  },[focusId, loading]);
+
   return (
     <>
       <div className="page-hero"><div className="page-hero-bg"/><div className="page-hero-grid"/><div className="page-hero-glow"/>
@@ -1194,8 +1230,12 @@ function PageDomaines() {
             {actifs.map((d,i)=>{
               let subs=[];try{subs=Array.isArray(d.sousDescriptions)?d.sousDescriptions:JSON.parse(d.sousDescriptions||"[]");}catch{}
               const even=i%2===0;
+              const isHighlighted = highlighted===d.id;
               return (
-                <div key={d.id} className="domaine-alt" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:60,alignItems:"center"}}>
+                <div key={d.id} id={`domaine-${d.id}`} className="domaine-alt" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:60,alignItems:"center",
+                  borderRadius:24,transition:"box-shadow .4s, background .4s",
+                  boxShadow:isHighlighted?"0 0 0 3px var(--orange), 0 20px 50px rgba(0,0,0,.1)":"none",
+                  background:isHighlighted?"var(--cream)":"transparent",padding:isHighlighted?24:0}}>
                   {even&&<Reveal cls="reveal-left"><div className="domaine-alt-img" style={{borderRadius:22,overflow:"hidden",height:360,background:"var(--cream)",boxShadow:"0 20px 50px rgba(0,0,0,.1)"}}><div className="img-zoom" style={{height:"100%"}}>{d.imageUrl?<img src={imgSrc(d.imageUrl)} alt={d.name}/>:<div style={{height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:64}}>🏗</div>}</div></div></Reveal>}
                   <Reveal cls={even?"reveal-right":"reveal-left"}>
                     <div className="section-tag">0{i+1}</div>
@@ -1480,7 +1520,7 @@ function PageContact({addToast}) {
                   <div><div style={{fontWeight:700,fontSize:13,color:"#fff",marginBottom:3}}>{it.t}</div><div style={{fontSize:13.5,color:"rgba(255,255,255,.5)",whiteSpace:"pre-line",lineHeight:1.6}}>{it.v}</div></div>
                 </div>
               ))}
-              <div style={{marginTop:28}}><a href="https://wa.me/22901425454954" target="_blank" rel="noreferrer" style={{padding:"10px 20px",background:"#25D366",color:"#fff",borderRadius:99,fontSize:13,fontWeight:600,display:"inline-flex",alignItems:"center",gap:7}}>WhatsApp</a></div>
+              <div style={{marginTop:28}}><a href="https://wa.me/2290142545495" target="_blank" rel="noreferrer" style={{padding:"10px 20px",background:"#25D366",color:"#fff",borderRadius:99,fontSize:13,fontWeight:600,display:"inline-flex",alignItems:"center",gap:7}}>WhatsApp</a></div>
             </div>
           </Reveal>
           <Reveal cls="reveal-right">
@@ -1529,14 +1569,16 @@ function Footer({navigate}) {
         <div>
           <div className="footer-col-title">Domaines d'intervention</div>
           <div className="footer-links">
-            {(actifs.length>0?actifs:FALLBACK.map((n,i)=>({id:i,name:n}))).map(d=><a key={d.id} onClick={()=>go("domaines")}>{d.name}</a>)}
+            {(actifs.length>0?actifs:FALLBACK.map((n,i)=>({id:i,name:n}))).map(d=>
+              <a key={d.id} onClick={()=>{actifs.length>0 ? navigate("domaines",d.id) : go("domaines");}}>{d.name}</a>
+            )}
           </div>
         </div>
         <div>
           <div className="footer-col-title">Contact</div>
           <div className="footer-links">
             <a style={{flexDirection:"column",alignItems:"flex-start",gap:2}}><span>Bénin, Abomey-Calavi — Ouèdo, La Verdure<br/>Tranche I, Lot 01, Parcelle L</span></a>
-            <a href="tel:+22901425454954">(+229) 0142545495</a>
+            <a href="tel:+2290142545495">(+229) 0142545495</a>
             <a href="mailto:contact@africaingenierie.com">contact@africaingenierie.com</a>
             <a href="https://www.africaingenierie.com" target="_blank" rel="noreferrer">www.africaingenierie.com</a>
           </div>
@@ -1549,7 +1591,7 @@ function Footer({navigate}) {
       <div className="social-bar">
         <div className="social-text">Suivez-nous et <strong>contactez-nous</strong> directement</div>
         <div className="social-links">
-          <a href="https://wa.me/22901425454954" target="_blank" rel="noreferrer" className="soc-btn soc-wa">
+          <a href="https://wa.me/2290142545495" target="_blank" rel="noreferrer" className="soc-btn soc-wa">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
             WhatsApp
           </a>
@@ -1570,9 +1612,18 @@ function Footer({navigate}) {
 // ── APP ───────────────────────────────────────────────────────────────────────
 export default function App() {
   const [page,setPage]=useState("accueil");
+  const [domaineFocus,setDomaineFocus]=useState(null);
   const [toasts,setToasts]=useState([]);
   const addToast=(msg,type="success")=>{const id=Date.now();setToasts(t=>[...t,{id,msg,type}]);setTimeout(()=>setToasts(t=>t.filter(x=>x.id!==id)),4500);};
-  const navigate=p=>{setPage(p);window.scrollTo(0,0);};
+  // navigate(page) va simplement à la page ; navigate(page, domaineId) va à la
+  // page "domaines" et fait défiler/surligne directement le domaine ciblé
+  // (corrige le clic sur "Domaines d'intervention" dans le footer qui
+  // renvoyait toujours vers la page générique quel que soit le domaine cliqué).
+  const navigate=(p,domaineId)=>{
+    setPage(p);
+    setDomaineFocus(domaineId ?? null);
+    if (domaineId==null) window.scrollTo(0,0);
+  };
   const [scrollPct, setScrollPct] = useState(0);
   const [showTop, setShowTop] = useState(false);
   useEffect(()=>{
@@ -1596,7 +1647,7 @@ export default function App() {
       <main key={page} className="page-enter">
         {page==="accueil"         && <PageAccueil       navigate={navigate}/>}
         {page==="qui-sommes-nous" && <PageQuiSommesNous/>}
-        {page==="domaines"        && <PageDomaines/>}
+        {page==="domaines"        && <PageDomaines focusId={domaineFocus}/>}
         {page==="projets"         && <PageProjets/>}
         {page==="formations"      && <PageFormations/>}
         {page==="etudes"          && <PageEtudes/>}

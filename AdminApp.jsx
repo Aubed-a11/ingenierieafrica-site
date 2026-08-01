@@ -213,6 +213,33 @@ const fmtDate     = iso => iso ? new Date(iso).toLocaleDateString("fr-FR") : "�
 const toDateVal   = iso => iso ? iso.slice(0,10) : "";
 const imgSrc      = v => !v ? null : (v.startsWith("http") || v.startsWith("blob")) ? v : `${BASE}${v}`;
 
+// Retire toute balise HTML brute qui aurait pu être collée dans un champ texte
+// (ex: copie depuis le code source d'une page, un export Word/Google Docs, etc.)
+// Corrige le bug "affichage des balises HTML après modification".
+const stripHtmlTags = (str) => {
+  if (typeof str !== "string" || !str) return str;
+  return str
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .trim();
+};
+// Champs à ne jamais nettoyer (URLs, dates, identifiants…) même si la valeur
+// contient techniquement des caractères ressemblant à du HTML.
+const NO_SANITIZE_KEYS = new Set(["imageUrl","logoUrl","videoUrl","siteWeb","imageAvant","imageApres",
+  "photoBefore","photoAfter","email","date","id","actif","categorie"]);
+const sanitizeFields = (obj={}) => {
+  const out = {...obj};
+  for (const k of Object.keys(out)) {
+    if (typeof out[k] === "string" && !NO_SANITIZE_KEYS.has(k)) out[k] = stripHtmlTags(out[k]);
+  }
+  return out;
+};
+
 // ── TRASH local ───────────────────────────────────────────────────────────────
 const TRASH_KEY = "ai_admin_projects_trash";
 const loadTrash = () => { try { return JSON.parse(localStorage.getItem(TRASH_KEY) || "[]"); } catch { return []; } };
@@ -397,28 +424,46 @@ const TableSkeleton = ({rows=4}) => (
 // ═════════════════════════════════════════════════════════════════════════════
 // IMAGE PICKER
 // ═════════════════════════════════════════════════════════════════════════════
-function ImagePicker({ value, onChange, onFileChange, label="Photo / Image", maxH=200 }) {
+function ImagePicker({ value, onChange, onFileChange, label="Photo / Image", maxH=200, hint, recommendedRatio }) {
   const [preview, setPreview] = useState(value ? imgSrc(value) : null);
   const [drag,    setDrag]    = useState(false);
   const [err,     setErr]     = useState("");
+  const [warn,    setWarn]    = useState("");
   const inputRef              = useRef();
   useEffect(() => { setPreview(value ? imgSrc(value) : null); }, [value]);
 
   const process = file => {
     if (!file || !file.type.startsWith("image/")) { setErr("Fichier invalide."); return; }
-    setErr("");
+    setErr(""); setWarn("");
     const local = URL.createObjectURL(file);
     setPreview(local);
     if (onFileChange) onFileChange(file);
     onChange(local);
+
+    // Vérifie que les dimensions de l'image respectent à peu près le ratio
+    // recommandé, pour éviter un rendu incohérent une fois affichée sur le site.
+    if (recommendedRatio) {
+      const img = new Image();
+      img.onload = () => {
+        const ratio = img.width / img.height;
+        const diff  = Math.abs(ratio - recommendedRatio) / recommendedRatio;
+        if (diff > 0.35) {
+          setWarn(`⚠️ Cette image fait ${img.width}×${img.height}px — un format proche de ${hint || "celui recommandé"} donnera un meilleur rendu.`);
+        } else if (img.width < 500) {
+          setWarn(`⚠️ Image assez petite (${img.width}×${img.height}px), une résolution plus haute évitera le flou.`);
+        }
+      };
+      img.src = local;
+    }
   };
   const onFile = e => { process(e.target.files[0]); e.target.value=""; };
   const onDrop = e => { e.preventDefault(); setDrag(false); process(e.dataTransfer.files[0]); };
-  const clear  = e => { e.stopPropagation(); setPreview(null); setErr(""); onChange(""); };
+  const clear  = e => { e.stopPropagation(); setPreview(null); setErr(""); setWarn(""); onChange(""); };
 
   return (
     <div style={{marginBottom:16}}>
-      <label style={{fontSize:12,color:"#888",marginBottom:6,display:"block",fontWeight:500}}>{label}</label>
+      <label style={{fontSize:12,color:"#888",marginBottom:hint?2:6,display:"block",fontWeight:500}}>{label}</label>
+      {hint && <div style={{fontSize:11,color:"#aaa",marginBottom:6,fontStyle:"italic"}}>Format recommandé : {hint}</div>}
       <div onClick={()=>inputRef.current.click()}
         onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)} onDrop={onDrop}
         style={{border:`2px dashed ${drag?"#2563EB":"#ddd"}`,borderRadius:12,background:drag?"#eff6ff":"#faf9f7",
@@ -446,6 +491,7 @@ function ImagePicker({ value, onChange, onFileChange, label="Photo / Image", max
         )}
       </div>
       {err && <div style={{fontSize:11,color:"#1D4ED8",marginTop:4}}>{err}</div>}
+      {warn && <div style={{fontSize:11,color:"#B45309",marginTop:4}}>{warn}</div>}
       <input ref={inputRef} type="file" accept="image/*,video/*,*/*" onChange={onFile} style={{display:"none"}}/>
     </div>
   );
@@ -675,7 +721,8 @@ function useCrud(endpoint, addToast, { imageField="image" }={}) {
   const create = useCallback(async (body) => {
     setSaving(true);
     try {
-      const {_imageFile,_imageFileBefore,_imageFileAfter,...fields} = body;
+      const {_imageFile,_imageFileBefore,_imageFileAfter,...rawFields} = body;
+      const fields = sanitizeFields(rawFields);
       const files = {};
       if (_imageFile) files[imageField] = _imageFile;
       if (_imageFileBefore) files["photoBefore"] = _imageFileBefore;
@@ -693,7 +740,8 @@ function useCrud(endpoint, addToast, { imageField="image" }={}) {
   const update = useCallback(async (id, body) => {
     setSaving(true);
     try {
-      const {_imageFile,_imageFileBefore,_imageFileAfter,...fields} = body;
+      const {_imageFile,_imageFileBefore,_imageFileAfter,...rawFields} = body;
+      const fields = sanitizeFields(rawFields);
       const files = {};
       if (_imageFile) files[imageField] = _imageFile;
       if (_imageFileBefore) files["photoBefore"] = _imageFileBefore;
@@ -753,7 +801,8 @@ function useDirecteur(addToast) {
   const save = useCallback(async (body) => {
     setSaving(true);
     try {
-      const {_imageFile,...fields} = body;
+      const {_imageFile,...rawFields} = body;
+      const fields = sanitizeFields(rawFields);
       let result;
       if (data?.id) {
         if (_imageFile) {
@@ -940,7 +989,8 @@ function DomainesSection({ addToast, onCountChange }) {
 
       {modal && (
         <Modal title={modal.mode==="add"?"Nouveau domaine":"Modifier le domaine"} onClose={()=>setModal(null)} wide>
-          <ImagePicker value={form.imageUrl} onChange={url=>setForm(f=>({...f,imageUrl:url}))} onFileChange={file=>setForm(f=>({...f,_imageFile:file}))}/>
+          <ImagePicker value={form.imageUrl} onChange={url=>setForm(f=>({...f,imageUrl:url}))} onFileChange={file=>setForm(f=>({...f,_imageFile:file}))}
+            hint="1200×900px (format 4:3)" recommendedRatio={4/3}/>
           <FInput label="Nom *" value={form.name} onChange={F("name")} placeholder="Ex: Maintenance industrielle"/>
           <FArea  label="Description principale" value={form.description} onChange={F("description")} placeholder="Vue d'ensemble du domaine…"/>
           <SousDescriptions value={form.sousDescriptions} onChange={v=>setForm(f=>({...f,sousDescriptions:v}))}/>
@@ -1068,7 +1118,8 @@ function ProjetsSection({ addToast, onCountChange }) {
 
       {modal && (
         <Modal title={modal.mode==="add"?"Nouveau projet":"Modifier le projet"} onClose={()=>setModal(null)}>
-          <ImagePicker value={form.imageUrl} onChange={url=>setForm(f=>({...f,imageUrl:url}))} onFileChange={file=>setForm(f=>({...f,_imageFile:file}))}/>
+          <ImagePicker value={form.imageUrl} onChange={url=>setForm(f=>({...f,imageUrl:url}))} onFileChange={file=>setForm(f=>({...f,_imageFile:file}))}
+            hint="900×600px (format 3:2)" recommendedRatio={3/2}/>
           <FInput label="Titre *" value={form.title} onChange={F("title")} placeholder="Ex: Humidification en égrenage"/>
           <FArea  label="Description" value={form.description} onChange={F("description")} placeholder="Résultats, contexte, client…"/>
           <FInput label="Date du projet" type="date" value={form.date} onChange={F("date")}/>
@@ -1172,10 +1223,12 @@ function EtudesSection({ addToast, onCountChange }) {
           <div className="grid-2">
             <ImagePicker label="📸 Photo AVANT" value={form.imageAvant}
               onChange={url=>setForm(f=>({...f,imageAvant:url}))}
-              onFileChange={file=>setForm(f=>({...f,_imageFileBefore:file}))} maxH={130}/>
+              onFileChange={file=>setForm(f=>({...f,_imageFileBefore:file}))} maxH={130}
+              hint="800×600px (4:3)" recommendedRatio={4/3}/>
             <ImagePicker label="✨ Photo APRÈS" value={form.imageApres}
               onChange={url=>setForm(f=>({...f,imageApres:url}))}
-              onFileChange={file=>setForm(f=>({...f,_imageFileAfter:file}))} maxH={130}/>
+              onFileChange={file=>setForm(f=>({...f,_imageFileAfter:file}))} maxH={130}
+              hint="800×600px (4:3), même cadrage que la photo AVANT" recommendedRatio={4/3}/>
           </div>
 
           <FInput label="Titre *" value={form.titre} onChange={F("titre")} placeholder="Ex: Rénovation du système de refroidissement"/>
@@ -1206,7 +1259,7 @@ function EtudesSection({ addToast, onCountChange }) {
 // ── MEMBRES ──────────────────────────────────────────────────────────────────
 // ═════════════════════════════════════════════════════════════════════════════
 function MembresSection({ addToast, onCountChange }) {
-  const { items, loading, saving, create, update, remove } = useCrud(API.members, addToast);
+  const { items, loading, saving, create, update, remove } = useCrud(API.members, addToast, {imageField:"photo"});
   const [modal, setModal]   = useState(null);
   const [confirm, setConf]  = useState(null);
   const blank = { name:"", role:"", department:"", email:"", phone:"", imageUrl:"", bio:"", _imageFile:null };
@@ -1248,7 +1301,8 @@ function MembresSection({ addToast, onCountChange }) {
       </Section>
       {modal && (
         <Modal title={modal.mode==="add"?"Nouveau membre":"Modifier le membre"} onClose={()=>setModal(null)}>
-          <ImagePicker value={form.imageUrl} onChange={url=>setForm(f=>({...f,imageUrl:url}))} onFileChange={file=>setForm(f=>({...f,_imageFile:file}))}/>
+          <ImagePicker value={form.imageUrl} onChange={url=>setForm(f=>({...f,imageUrl:url}))} onFileChange={file=>setForm(f=>({...f,_imageFile:file}))}
+            hint="500×500px (portrait carré)" recommendedRatio={1}/>
           <div className="grid-2">
             <div style={{gridColumn:"1/-1"}}><FInput label="Nom complet *" value={form.name} onChange={F("name")} placeholder="Ex: Dr. Koné Didier"/></div>
             <FInput label="Rôle / Poste *"  value={form.role}       onChange={F("role")}       placeholder="Ex: Ingénieur Civil"/>
@@ -1337,7 +1391,8 @@ function FormationsSection({ addToast, onCountChange }) {
         <Modal title={modal.mode==="add"?"Nouvelle formation":"Modifier la formation"} onClose={()=>setModal(null)}>
           <ImagePicker value={form.imageUrl}
             onChange={url=>setForm(f=>({...f,imageUrl:url}))}
-            onFileChange={file=>setForm(f=>({...f,_imageFile:file}))}/>
+            onFileChange={file=>setForm(f=>({...f,_imageFile:file}))}
+            hint="800×450px (format 16:9)" recommendedRatio={16/9}/>
 
           <FInput label="Titre *" value={form.title} onChange={F("title")}
             placeholder="Ex: Optimisation de la maintenance"/>
@@ -1442,7 +1497,7 @@ function DirecteurSection({ addToast }) {
                   <span className="dir-badge" style={{display:"inline-flex",alignItems:"center",gap:4}}><Star size={11}/>{titre}</span>
                 </div>
                 {presentation
-                  ? <p style={{fontSize:13.5,lineHeight:1.75,color:"#555",whiteSpace:"pre-wrap",borderLeft:"3px solid #f0ede8",paddingLeft:14}}>{presentation}</p>
+                  ? <p style={{fontSize:13.5,lineHeight:1.75,color:"#555",whiteSpace:"pre-wrap",borderLeft:"3px solid #f0ede8",paddingLeft:14}}>{stripHtmlTags(presentation)}</p>
                   : <p style={{fontSize:13,color:"#ccc",fontStyle:"italic"}}>Aucune présentation renseignée.</p>}
               </div>
             </div>
@@ -1476,7 +1531,8 @@ function DirecteurSection({ addToast }) {
               <div style={{marginLeft:"auto",fontSize:10,color:"#bbb",fontStyle:"italic"}}>Aperçu live</div>
             </div>
           )}
-          <ImagePicker value={form.imageUrl} onChange={url=>setForm(f=>({...f,imageUrl:url}))} onFileChange={file=>setForm(f=>({...f,_imageFile:file}))}/>
+          <ImagePicker value={form.imageUrl} onChange={url=>setForm(f=>({...f,imageUrl:url}))} onFileChange={file=>setForm(f=>({...f,_imageFile:file}))}
+            hint="600×600px (portrait carré)" recommendedRatio={1}/>
           <FInput label="Nom complet *" value={form.nom} onChange={F("nom")} placeholder="Ex: M. Koné Ibrahim"/>
           <FInput label="Titre / Fonction" value={form.titre} onChange={F("titre")} placeholder="Ex: Directeur Général, PDG…"/>
           <FArea  label="Présentation" rows={6} value={form.presentation} onChange={F("presentation")} placeholder="Parcours, vision, expérience, message aux clients…"/>
@@ -1753,7 +1809,7 @@ function QuiSommesNousSection({ addToast }) {
     if(!form.texte.trim()) return addToast("Le texte est requis","error");
     setSaving(true);
     try {
-      const result = await api.post(API.quiSommesNous, form);
+      const result = await api.post(API.quiSommesNous, sanitizeFields(form));
       setData(result);
       addToast("Enregistré");
       setModal(false);
@@ -1879,7 +1935,8 @@ function FormationsAvenirSection({ addToast, onCountChange }) {
 
       {modal && (
         <Modal title={modal.mode==="add"?"Nouvelle formation à venir":"Modifier"} onClose={()=>setModal(null)}>
-          <ImagePicker value={form.imageUrl} onChange={url=>setForm(f=>({...f,imageUrl:url}))} onFileChange={file=>setForm(f=>({...f,_imageFile:file}))}/>
+          <ImagePicker value={form.imageUrl} onChange={url=>setForm(f=>({...f,imageUrl:url}))} onFileChange={file=>setForm(f=>({...f,_imageFile:file}))}
+            hint="800×450px (format 16:9)" recommendedRatio={16/9}/>
           <FInput label="Titre *" value={form.titre} onChange={F("titre")} placeholder="Ex: Formation en génie civil avancé"/>
           <FArea  label="Description" rows={4} value={form.texte} onChange={F("texte")} placeholder="Programme, objectifs, prérequis…"/>
           <FInput label="URL Vidéo (optionnel)" value={form.videoUrl} onChange={F("videoUrl")} placeholder="https://youtube.com/embed/..."/>
@@ -2145,7 +2202,7 @@ function ContactSection({ addToast, onCountChange }) {
 // ── PARTENAIRES ──────────────────────────────────────────────────────────────
 // ═════════════════════════════════════════════════════════════════════════════
 function PartenairesSection({ addToast, onCountChange }) {
-  const { items, loading, saving, create, update, remove } = useCrud(API.partenaires, addToast);
+  const { items, loading, saving, create, update, remove } = useCrud(API.partenaires, addToast, {imageField:"logo"});
   const [modal,   setModal]  = useState(null);
   const [confirm, setConf]   = useState(null);
   const blank = { nom:"", logoUrl:"", siteWeb:"", description:"", _imageFile:null };
@@ -2192,7 +2249,8 @@ function PartenairesSection({ addToast, onCountChange }) {
         <Modal title={modal.mode==="add"?"Nouveau partenaire":"Modifier le partenaire"} onClose={()=>setModal(null)}>
           <ImagePicker label="Logo du partenaire" value={form.logoUrl}
             onChange={url=>setForm(f=>({...f,logoUrl:url}))}
-            onFileChange={file=>setForm(f=>({...f,_imageFile:file}))}/>
+            onFileChange={file=>setForm(f=>({...f,_imageFile:file}))}
+            hint="PNG transparent, environ 400×200px — le logo sera automatiquement cadré et centré sur le site"/>
           <FInput label="Nom *" value={form.nom} onChange={F("nom")} placeholder="Ex: Total Énergie, OCP Group…"/>
           <FInput label="Site web" value={form.siteWeb} onChange={F("siteWeb")} placeholder="https://www.partenaire.com"/>
           <FArea  label="Description" rows={3} value={form.description} onChange={F("description")}
